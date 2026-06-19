@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Тип сборки: консольное приложение-->
+    <OutputType>Exe</OutputType>
+    <!-- Целевая платформа: .NET 10 -->
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- Неявные using'и: компилятор сам добавит System, System.Linq и т.п.
+         Это убирает рутину; "интересные" using'и мы всё равно пишем явно в файлах. -->
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Включаем проверку nullable-ссылок: компилятор предупреждает о возможном null.
+         Это хорошая практика и помогает не словить NullReferenceException. -->
+    <Nullable>enable</Nullable>
+    <!-- Корневое пространство имён проекта -->
+    <RootNamespace>DistributedWebCrawler</RootNamespace>
+    <!-- Имя итогового файла: получится crawler(.exe) -->
+    <AssemblyName>crawler</AssemblyName>
+  </PropertyGroup>
+  
+</Project>

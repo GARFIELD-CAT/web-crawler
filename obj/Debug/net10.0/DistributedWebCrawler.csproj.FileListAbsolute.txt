@@ -1,0 +1,15 @@
+D:\homework\web-crawler\bin\Debug\net10.0\crawler.exe
+D:\homework\web-crawler\bin\Debug\net10.0\crawler.deps.json
+D:\homework\web-crawler\bin\Debug\net10.0\crawler.runtimeconfig.json
+D:\homework\web-crawler\bin\Debug\net10.0\crawler.dll
+D:\homework\web-crawler\bin\Debug\net10.0\crawler.pdb
+D:\homework\web-crawler\obj\Debug\net10.0\DistributedWebCrawler.GeneratedMSBuildEditorConfig.editorconfig
+D:\homework\web-crawler\obj\Debug\net10.0\DistributedWebCrawler.AssemblyInfoInputs.cache
+D:\homework\web-crawler\obj\Debug\net10.0\DistributedWebCrawler.AssemblyInfo.cs
+D:\homework\web-crawler\obj\Debug\net10.0\DistributedWebCrawler.csproj.CoreCompileInputs.cache
+D:\homework\web-crawler\obj\Debug\net10.0\DistributedWebCrawler.sourcelink.json
+D:\homework\web-crawler\obj\Debug\net10.0\crawler.dll
+D:\homework\web-crawler\obj\Debug\net10.0\refint\crawler.dll
+D:\homework\web-crawler\obj\Debug\net10.0\crawler.pdb
+D:\homework\web-crawler\obj\Debug\net10.0\DistributedWebCrawler.genruntimeconfig.cache
+D:\homework\web-crawler\obj\Debug\net10.0\ref\crawler.dll

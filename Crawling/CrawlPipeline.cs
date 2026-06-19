@@ -1,0 +1,137 @@
+using System.Threading.Tasks.Dataflow;
+using DistributedWebCrawler.Interfaces;
+using DistributedWebCrawler.Models;
+
+namespace DistributedWebCrawler.Crawling;
+
+/// <summary>
+/// Конвейер обработки страниц на основе TPL Dataflow.
+///
+/// Идея конвейера (как на заводе): страница проходит несколько "станций":
+///   1) Загрузка     (скачать HTML по сети)          — асинхронно, много параллельно
+///   2) Разбор       (вытащить заголовок/слова/ссылки)
+///   3) Выдача       (отдать готовый результат наружу через колбэк onResult)
+///
+/// Блоки соединены: что выдаёт один блок, попадает на вход следующему.
+/// Каждый блок может обрабатывать несколько элементов параллельно
+/// (MaxDegreeOfParallelism), и Dataflow сам управляет потоками — нам не нужно
+/// вручную создавать Thread (это и запрещено заданием).
+///
+/// Конвейер "живущий": можно по одному добавлять задачи через Post(),
+/// а в конце вызвать CompleteAsync(), чтобы дождаться обработки всех задач.
+/// </summary>
+public class CrawlPipeline : IDisposable
+{
+    private readonly PageDownloader _downloader;
+    private readonly IHtmlParser _parser;
+    private readonly Action<PageData> _onResult;
+    private readonly CancellationToken _ct;
+
+    // Три "станции" конвейера:
+    private readonly TransformBlock<CrawlTask, DownloadOutcome> _downloadBlock; // станция 1
+    private readonly TransformBlock<DownloadOutcome, PageData> _parseBlock;     // станция 2
+    private readonly ActionBlock<PageData> _outputBlock;                        // станция 3
+
+    public CrawlPipeline(
+        PageDownloader downloader,
+        IHtmlParser parser,
+        int maxParallelism,
+        Action<PageData> onResult,
+        CancellationToken ct)
+    {
+        _downloader = downloader;
+        _parser = parser;
+        _onResult = onResult;
+        _ct = ct;
+
+        // Настройки для блоков, которые работают параллельно.
+        var parallelOptions = new ExecutionDataflowBlockOptions
+        {
+            MaxDegreeOfParallelism = maxParallelism, // сколько страниц обрабатывать одновременно
+            CancellationToken = ct                   // конвейер можно отменить
+        };
+
+        // Для выдачи результата хватит одного потока (порядок результатов нам не важен).
+        var singleThreadOptions = new ExecutionDataflowBlockOptions
+        {
+            MaxDegreeOfParallelism = 1,
+            CancellationToken = ct
+        };
+
+        _downloadBlock = new TransformBlock<CrawlTask, DownloadOutcome>(DownloadAsync, parallelOptions);
+        _parseBlock = new TransformBlock<DownloadOutcome, PageData>(Parse, parallelOptions);
+        _outputBlock = new ActionBlock<PageData>(page => _onResult(page), singleThreadOptions);
+
+        // Соединяем станции. PropagateCompletion = true означает:
+        // когда предыдущий блок завершится, следующий тоже завершится (после обработки остатка).
+        var linkOptions = new DataflowLinkOptions { PropagateCompletion = true };
+        _downloadBlock.LinkTo(_parseBlock, linkOptions);
+        _parseBlock.LinkTo(_outputBlock, linkOptions);
+    }
+
+    /// <summary>Добавить задачу в конвейер (на вход первой станции).</summary>
+    public void Post(CrawlTask task) => _downloadBlock.Post(task);
+
+    /// <summary>
+    /// Сообщить, что новых задач больше не будет, и дождаться обработки всех уже добавленных.
+    /// </summary>
+    public async Task CompleteAsync()
+    {
+        _downloadBlock.Complete();        // "вход закрыт"
+        await _outputBlock.Completion;    // ждём, пока всё дойдёт до последней станции
+    }
+
+    // --- Станция 1: загрузка ---
+    private async Task<DownloadOutcome> DownloadAsync(CrawlTask task)
+    {
+        (bool ok, string html, int bytes, string? error) = await _downloader.DownloadAsync(task.Url, _ct);
+        return new DownloadOutcome { Task = task, Ok = ok, Html = html, Bytes = bytes, Error = error };
+    }
+
+    // --- Станция 2: разбор HTML ---
+    private PageData Parse(DownloadOutcome d)
+    {
+        if (!d.Ok)
+        {
+            // Загрузка не удалась — возвращаем результат-неудачу.
+            return new PageData
+            {
+                Url = d.Task.Url,
+                Depth = d.Task.Depth,
+                Success = false,
+                Error = d.Error,
+                ByteCount = d.Bytes
+            };
+        }
+
+        return new PageData
+        {
+            Url = d.Task.Url,
+            Depth = d.Task.Depth,
+            Success = true,
+            Title = _parser.ExtractTitle(d.Html),
+            Words = _parser.ExtractWords(d.Html).ToList(),
+            Links = _parser.ExtractLinks(d.Html, d.Task.Url).ToList(),
+            ByteCount = d.Bytes
+        };
+    }
+
+    public void Dispose()
+    {
+        // Блоки Dataflow не требуют ручного освобождения ресурсов,
+        // метод оставлен для совместимости с конструкцией using.
+    }
+
+    /// <summary>
+    /// Промежуточный результат между станцией загрузки и станцией разбора.
+    /// Внутренний класс — он нужен только внутри конвейера.
+    /// </summary>
+    private class DownloadOutcome
+    {
+        public CrawlTask Task { get; set; } = null!;
+        public bool Ok { get; set; }
+        public string Html { get; set; } = string.Empty;
+        public int Bytes { get; set; }
+        public string? Error { get; set; }
+    }
+}

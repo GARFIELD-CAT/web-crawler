@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using DistributedWebCrawler.Export;
 using DistributedWebCrawler.Indexing;
 using DistributedWebCrawler.Interfaces;
 using DistributedWebCrawler.Models;
@@ -23,7 +24,7 @@ namespace DistributedWebCrawler.Network;
 /// Координация идёт через объекты-поля этого класса (очереди, словари), а НЕ через
 /// глобальные переменные — это требование задания.
 /// </summary>
-public class MasterServer
+public sealed class MasterServer
 {
     private readonly int _port;
     private readonly ILogger _logger;
@@ -31,6 +32,7 @@ public class MasterServer
     private readonly int _maxDepth;
     private readonly int _maxPages;
     private readonly int _politenessDelayMs;
+    private readonly string _outputPath;
     private readonly TimeSpan _heartbeatTimeout;
     private readonly int _heartbeatCheckIntervalMs;
 
@@ -45,9 +47,17 @@ public class MasterServer
     // Значение (byte) нам не важно — используем словарь как множество.
     private readonly ConcurrentDictionary<string, byte> _visited = new();
 
+    // Множество уже ОБРАБОТАННЫХ URL (по которым пришёл и учтён результат).
+    // Защищает от повторной обработки при переназначении задач (см. ProcessResult).
+    private readonly ConcurrentDictionary<string, byte> _completed = new();
+
     private readonly InvertedIndex _index = new();
     private readonly Statistics _stats = new();
     private readonly SystemMonitor _monitor;
+    private readonly CsvExporter _csvExporter;
+
+    // Все полученные результаты (и успешные, и с ошибкой) — для выгрузки в CSV в конце.
+    private readonly ConcurrentQueue<PageData> _allResults = new();
 
     // Счётчики (меняем атомарно через Interlocked):
     private long _pendingCount;    // сколько задач "в работе" (в очереди или у воркеров)
@@ -72,7 +82,8 @@ public class MasterServer
         IDistributionStrategy strategy,
         int maxDepth,
         int maxPages,
-        int politenessDelayMs)
+        int politenessDelayMs,
+        string outputPath)
     {
         _port = port;
         _logger = logger;
@@ -80,6 +91,8 @@ public class MasterServer
         _maxDepth = maxDepth;
         _maxPages = maxPages;
         _politenessDelayMs = politenessDelayMs;
+        _outputPath = outputPath;
+        _csvExporter = new CsvExporter(logger);
         _heartbeatTimeout = TimeSpan.FromSeconds(6);   // нет пульса 6 секунд -> считаем упавшим
         _heartbeatCheckIntervalMs = 2000;              // проверяем пульс каждые 2 секунды
 
@@ -133,6 +146,17 @@ public class MasterServer
         _listener?.Stop();
 
         PrintSummary(stopwatch.Elapsed);
+
+        // Выгружаем собранные данные в CSV-файл.
+        try
+        {
+            _csvExporter.Export(ResolveOutputPath(), _allResults);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Не удалось выгрузить данные в CSV", ex);
+        }
+
         RunInteractiveSearch(externalCt);
     }
 
@@ -265,8 +289,19 @@ public class MasterServer
         // Задача больше не "в работе" у этого воркера.
         worker.InFlight.TryRemove(page.Url, out _);
 
+        // Защита от повторной обработки одного и того же URL. Дубликат может прийти,
+        // если задача "упавшего" (на самом деле живого) воркера была переназначена
+        // другому: тогда результат приходит дважды. Первый результат по URL
+        // обрабатываем, любые повторные — игнорируем. Без этого в CSV попадали бы
+        // дубли, а счётчик незавершённых задач уходил бы в минус (досрочное завершение).
+        if (!_completed.TryAdd(page.Url, 0))
+            return;
+
         if (page.Success)
         {
+            // Для выгрузки в CSV сохраняем только успешно обработанные страницы.
+            _allResults.Enqueue(page);
+
             _index.AddDocument(page);
             Interlocked.Increment(ref _pagesIndexed);
             _stats.RecordSuccess(page.ByteCount, page.Links.Count);
@@ -444,6 +479,29 @@ public class MasterServer
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ct.Register(() => tcs.TrySetResult());
         return tcs.Task;
+    }
+
+    /// <summary>
+    /// Определить путь к CSV-файлу. Если пользователь задал --output, используем его.
+    /// Иначе формируем имя автоматически: "хост_дата-время.csv",
+    /// например books.toscrape.com_20260619-230145.csv
+    /// </summary>
+    private string ResolveOutputPath()
+    {
+        if (!string.IsNullOrWhiteSpace(_outputPath))
+            return _outputPath;
+
+        string host = string.IsNullOrEmpty(_seedHost) ? "site" : _seedHost;
+        string timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        return $"{SanitizeFileName(host)}_{timestamp}.csv";
+    }
+
+    /// <summary>Убрать из имени файла символы, недопустимые в именах файлов.</summary>
+    private static string SanitizeFileName(string name)
+    {
+        foreach (char invalid in Path.GetInvalidFileNameChars())
+            name = name.Replace(invalid, '_');
+        return name;
     }
 
     private void PrintSummary(TimeSpan elapsed)

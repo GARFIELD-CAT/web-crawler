@@ -1,34 +1,43 @@
 # Руководство по реализации
 
 Документ объясняет ключевые компоненты изнутри, показывает примеры использования
-основных классов и даёт рекомендации по запуску и настройке.
+классов и даёт рекомендации по запуску и демонстрации.
 
 ---
 
 ## 1. Ключевые компоненты
 
-### 1.1. `PageDownloader` — загрузка страниц
+### 1.1. `PageDownloader` — загрузка страниц с ретраями
 
-Асинхронно скачивает HTML по одному общему `HttpClient`. Возвращает кортеж
-«получилось / HTML / размер / ошибка» и **никогда не роняет программу** на сетевой
-ошибке (превращает её в «неуспех»). Отмену (`OperationCanceledException`)
-пробрасывает наверх — это штатный сигнал остановки.
+Асинхронно скачивает HTML по общему `HttpClient`. Внутри — цикл повторных попыток по
+`RetryPolicy`: временные ошибки (5xx, 429, таймаут, сетевой сбой) повторяются с
+нарастающей паузой, а постоянные (например, 404) — нет. Отмену (`Ctrl+C`/`Stop`)
+пробрасывает наверх.
 
 ```csharp
-var http = new HttpClient();
-var downloader = new PageDownloader(http);
+var policy = new RetryPolicy(retries: 2, baseDelay: TimeSpan.FromMilliseconds(500));
+var downloader = new PageDownloader(httpClient, policy, logger);
 
 (bool ok, string html, int bytes, string? error) =
     await downloader.DownloadAsync("https://books.toscrape.com/", CancellationToken.None);
-
-if (ok)
-    Console.WriteLine($"Скачано {bytes} байт");
 ```
 
-### 1.2. `HtmlParser` — разбор HTML
+### 1.2. `RetryPolicy` — какие ошибки и сколько раз повторять
+
+Хранит число попыток, базовую паузу (растёт ×2, потолок 30 с) и набор повторяемых
+HTTP-статусов (по умолчанию `408, 425, 429, 500, 502, 503, 504`).
+
+```csharp
+// повторять только 500 и 503, 3 раза, базовая пауза 1 с
+var policy = new RetryPolicy(3, TimeSpan.FromSeconds(1), new[] { 500, 503 });
+bool retry = policy.IsRetryableStatus(503); // true
+```
+
+### 1.3. `HtmlParser` — разбор HTML
 
 Извлекает заголовок, слова и ссылки регулярными выражениями. Относительные ссылки
-превращаются в абсолютные относительно базового адреса.
+превращаются в абсолютные относительно базового адреса; берутся только `http(s)`
+ссылки из тегов `<a href>`, якоря (`#...`) и query/fragment отбрасываются.
 
 ```csharp
 IHtmlParser parser = new HtmlParser();
@@ -37,62 +46,62 @@ IReadOnlyList<string> words = parser.ExtractWords(html);
 IReadOnlyList<string> links = parser.ExtractLinks(html, "https://books.toscrape.com/");
 ```
 
-### 1.3. `CrawlPipeline` — конвейер на TPL Dataflow
+### 1.4. `CrawlPipeline` — конвейер на TPL Dataflow
 
-Сердце параллельной обработки. Три «станции»: загрузка → разбор → выдача. Задачи
-добавляются по одной (`Post`), а в конце вызывается `CompleteAsync()`.
+Три «станции»: загрузка → разбор → выдача. Задачи добавляются по одной (`Post`), в
+конце вызывается `CompleteAsync()`.
 
 ```csharp
-var pipeline = new CrawlPipeline(
-    downloader, parser,
-    maxParallelism: 8,
+var pipeline = new CrawlPipeline(downloader, parser, maxParallelism: 8,
     onResult: page => Console.WriteLine($"Готово: {page.Url}"),
     ct: CancellationToken.None);
 
 pipeline.Post(new CrawlTask("https://books.toscrape.com/", 0));
-await pipeline.CompleteAsync(); // дождаться обработки всех задач
+await pipeline.CompleteAsync();
 ```
 
-Параметр `maxParallelism` определяет, сколько страниц обрабатывается одновременно.
+### 1.5. `InvertedIndex` — индекс и поиск (PLINQ)
 
-### 1.4. `InvertedIndex` — индекс и поиск
-
-Хранит соответствие «слово → страницы, где оно встречается». Поиск складывает
-релевантность по словам запроса и ранжирует результаты через PLINQ.
+Хранит «слово → страницы». Поиск суммирует релевантность по словам запроса и
+ранжирует результаты через PLINQ (`AsParallel`).
 
 ```csharp
 var index = new InvertedIndex();
 index.AddDocument(pageData);
-
 IReadOnlyList<SearchResult> results = index.Search("history england", maxResults: 10);
-foreach (var r in results)
-    Console.WriteLine($"[{r.Score}] {r.Title} — {r.Url}");
 ```
 
-### 1.5. `IDistributionStrategy` — выбор воркера (паттерн Strategy)
+### 1.6. `IDistributionStrategy` — выбор воркера (Strategy)
 
 ```csharp
 IDistributionStrategy strategy = new LeastLoadedStrategy();
 WorkerInfo? chosen = strategy.SelectWorker(aliveWorkers);
 ```
 
-- `RoundRobinStrategy` — раздаёт по очереди.
-- `LeastLoadedStrategy` — отдаёт наименее загруженному воркеру.
+`RoundRobinStrategy` — по очереди; `LeastLoadedStrategy` — наименее загруженному.
 
-### 1.6. `MasterServer` и `WorkerClient` — сетевая координация
+### 1.7. `MasterServer` и `WorkerClient` — координация
 
 ```csharp
-// Мастер
-var master = new MasterServer(
-    port: 5000, logger, new RoundRobinStrategy(),
-    maxDepth: 2, maxPages: 50, politenessDelayMs: 200);
+// Мастер (последний параметр — путь к CSV; пустая строка = авто-имя)
+var master = new MasterServer(port: 5000, logger, new RoundRobinStrategy(),
+    maxDepth: 2, maxPages: 50, politenessDelayMs: 200, outputPath: "");
 await master.RunAsync("https://books.toscrape.com/", ct);
 
 // Воркер
-var worker = new WorkerClient(
-    "localhost", 5000, "worker-1",
+var worker = new WorkerClient("localhost", 5000, "worker-1",
     maxParallelism: 8, logger, downloader, parser);
 await worker.RunAsync(ct);
+```
+
+### 1.8. `CsvExporter` — выгрузка в CSV
+
+Пишет успешные страницы с экранированием по RFC 4180 и BOM (для Excel). Столбцы:
+`Url, Depth, Title, Words` (первые 100 слов), `ByteCount, Success`.
+
+```csharp
+var exporter = new CsvExporter(logger);
+exporter.Export("results.csv", pages, maxWords: 100);
 ```
 
 ---
@@ -100,73 +109,77 @@ await worker.RunAsync(ct);
 ## 2. Как компоненты взаимодействуют
 
 1. `Program` разбирает аргументы и создаёт нужный объект (`MasterServer`,
-   `WorkerClient` или `BenchmarkRunner`).
-2. `MasterServer` использует `IDistributionStrategy`, `InvertedIndex`,
-   `Statistics`, `SystemMonitor` и `MessageProtocol`.
-3. `WorkerClient` использует `CrawlPipeline` (а тот — `PageDownloader` и
-   `HtmlParser`) и `MessageProtocol`.
-4. Мастер и воркер обмениваются объектами `Message` через `MessageProtocol`
-   поверх TCP.
+   `WorkerClient` или `BenchmarkRunner`), а также `RetryPolicy` для загрузчика.
+2. `MasterServer` использует `IDistributionStrategy`, `InvertedIndex`, `Statistics`,
+   `SystemMonitor`, `CsvExporter` и `MessageProtocol`.
+3. `WorkerClient` использует `CrawlPipeline` (а тот — `PageDownloader` с `RetryPolicy`
+   и `HtmlParser`) и `MessageProtocol`.
+4. Мастер и воркер обмениваются объектами `Message` через `MessageProtocol` поверх TCP.
 
-Слабая связанность достигается за счёт интерфейсов и передачи зависимостей через
-конструкторы (вместо обращения к глобальным переменным).
+Слабая связанность достигается интерфейсами и передачей зависимостей через
+конструкторы (без глобальных переменных).
 
 ---
 
 ## 3. Управление параллелизмом и потокобезопасностью
 
-| Что | Чем обеспечивается |
-|-----|--------------------|
-| Параллельная загрузка/разбор | `MaxDegreeOfParallelism` в блоках Dataflow |
-| Очередь задач | `BlockingCollection` (безопасна для многих потоков) |
-| Общие словари (индекс, посещённые) | `ConcurrentDictionary` |
-| Счётчики | `Interlocked` (атомарные операции) |
-| Запись в один сетевой поток | `SemaphoreSlim` (по одному «писателю») |
-| Аккуратный вывод в консоль | `lock` (единственное место) |
+| Что                                              | Чем обеспечивается                         |
+| ------------------------------------------------ | ------------------------------------------ |
+| Параллельная загрузка/разбор                     | `MaxDegreeOfParallelism` в блоках Dataflow |
+| Очередь задач                                    | `BlockingCollection`                       |
+| Общие словари (индекс, посещённые, обработанные) | `ConcurrentDictionary`                     |
+| Накопление результатов для CSV, примеры 404      | `ConcurrentQueue`                          |
+| Счётчики                                         | `Interlocked`                              |
+| Запись в один сетевой поток                      | `SemaphoreSlim`                            |
+| Аккуратный вывод в консоль                       | `lock` (единственное место)                |
 
-Важная деталь: цикл раздачи задач в мастере использует
-`BlockingCollection.GetConsumingEnumerable`, который **блокирует поток** в ожидании
-новых задач. Это допустимо, потому что таких циклов один и он работает в отдельной
-фоновой задаче. В высоконагруженных системах для этого чаще берут
-`System.Threading.Channels`, но для учебного примера `BlockingCollection`
-нагляднее и прямо рекомендован заданием.
+Деталь: цикл раздачи в мастере использует `BlockingCollection.GetConsumingEnumerable`,
+который **блокирует** поток в ожидании задач. Это допустимо: такой цикл один и работает
+в отдельной фоновой задаче. В высоконагруженных системах для этого чаще берут
+`System.Threading.Channels`, но `BlockingCollection` нагляднее и рекомендован заданием.
 
 ---
 
-## 4. Обработка ошибок
+## 4. Обработка ошибок и отказов
 
-- **Сетевые ошибки загрузки** — превращаются в «неуспех», обход продолжается.
-- **Обрыв соединения с воркером** — мастер ловит исключение, удаляет воркера и
+- **Временные ошибки загрузки** (5xx, 429, таймаут, сеть) — повторяются по
+  `RetryPolicy`; если попытки исчерпаны, страница помечается неуспехом.
+- **404 и прочие 4xx** — повторять бессмысленно, сразу неуспех; 404 не засоряют лог
+  (считаются отдельно, в итогах выводится их число и до 10 примеров).
+- **Обрыв соединения с воркером / отсутствие heartbeat** — мастер удаляет воркера и
   переназначает его задачи.
-- **Некорректные данные в сети** — `MessageProtocol` проверяет длину сообщения и
-  бросает понятное исключение.
-- **Отмена** — `OperationCanceledException` везде обрабатывается как штатное
-  завершение, а не как ошибка.
+- **Повторный результат по одному URL** — игнорируется (`_completed`), чтобы не было
+  дублей в индексе и CSV и преждевременного завершения обхода.
+- **Некорректные данные в сети** — `MessageProtocol` проверяет длину сообщения.
+- **Отмена** — `OperationCanceledException` обрабатывается как штатное завершение.
+- **ASCII в заголовках** — значение `User-Agent` только из ASCII (иначе `HttpClient`
+  отклонит запрос).
 
 ---
 
 ## 5. Рекомендации по запуску и настройке
 
-- **Сначала мастер, потом воркеры.** Мастер должен слушать порт до подключения
-  воркеров (хотя воркеры умеют переподключаться повторным запуском).
-- **Несколько воркеров — несколько терминалов.** Задавайте им разные `--id`.
-- **Скорость против вежливости.** Параметр `--delay` регулирует паузу между
-  выдачами задач. Меньше задержка — быстрее обход, но выше нагрузка на сайт.
-- **Глубина и лимит.** `--depth` и `--pages` ограничивают объём обхода — удобно
-  для демонстрации, чтобы система завершалась за разумное время.
-- **Стратегия.** Для демонстрации балансировки используйте
-  `--strategy leastloaded` и воркеры с разным `--parallelism`.
-- **Свой сайт.** Меняйте `--seed`, но обходите только разрешённые ресурсы.
+- **Сначала мастер, потом воркеры.** Воркерам задавайте разные `--id`.
+- **Скорость против вежливости.** `--delay` регулирует паузу между выдачами задач
+  (действует глобально). Меньше задержка — быстрее обход, но выше нагрузка на сайт.
+- **Глубина и лимит.** `--depth` и `--pages` ограничивают объём обхода.
+- **Стратегия.** Для демонстрации балансировки: `--strategy leastloaded` и воркеры с
+  разным `--parallelism`.
+- **Ретраи.** `--retries`, `--retry-delay`, `--retry-status` настраивают повторы.
+  Например: `--retries 3 --retry-delay 1000 --retry-status 500,503`.
+- **CSV.** По умолчанию имя `хост_дата-время.csv`; своё — через `--output`.
 
 ---
 
 ## 6. Как продемонстрировать ключевые возможности
 
-| Что показать | Как |
-|--------------|-----|
-| Распределённую работу | мастер + 2–3 воркера в разных терминалах |
-| Балансировку | `--strategy leastloaded`, воркеры с разным `--parallelism` |
-| Отказоустойчивость | закрыть один воркер во время обхода |
-| Мониторинг | смотреть строки «МОНИТОР» в терминале мастера |
-| Поиск (PLINQ) | ввести запрос в приглашении `поиск>` после обхода |
-| Ускорение | запустить `benchmark` и сравнить времена |
+| Что показать          | Как                                                                        |
+| --------------------- | -------------------------------------------------------------------------- |
+| Распределённую работу | мастер + 2–3 воркера в разных терминалах                                   |
+| Балансировку          | `--strategy leastloaded`, разный `--parallelism`                           |
+| Отказоустойчивость    | закрыть один воркер во время обхода                                        |
+| Ретраи                | временно «сломать» сеть/сайт или задать `--retry-status` под нужный статус |
+| Мониторинг            | строки «МОНИТОР» в терминале мастера                                       |
+| Поиск (PLINQ)         | ввести запрос в приглашении `поиск>` после обхода                          |
+| Ускорение             | запустить `benchmark` и сравнить времена                                   |
+| Выгрузку данных       | открыть полученный CSV-файл                                                |

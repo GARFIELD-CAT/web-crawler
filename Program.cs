@@ -70,6 +70,9 @@ internal static class Program
         int pages = GetIntArg(args, "--pages", 50);
         int delay = GetIntArg(args, "--delay", 200);
         string strategyName = GetArg(args, "--strategy", "roundrobin").ToLowerInvariant();
+        // Пустое значение по умолчанию = имя файла сформируется автоматически
+        // (хост сайта + дата и время обхода).
+        string output = GetArg(args, "--output", "");
 
         ILogger logger = new ConsoleLogger("MASTER");
 
@@ -80,7 +83,7 @@ internal static class Program
             _ => new RoundRobinStrategy()
         };
 
-        var master = new MasterServer(port, logger, strategy, depth, pages, delay);
+        var master = new MasterServer(port, logger, strategy, depth, pages, delay, output);
         await master.RunAsync(seed, ct);
         return 0;
     }
@@ -96,7 +99,7 @@ internal static class Program
 
         ILogger logger = new ConsoleLogger(id.ToUpperInvariant());
         using HttpClient http = CreateHttpClient();
-        var downloader = new PageDownloader(http);
+        var downloader = new PageDownloader(http, BuildRetryPolicy(args, logger), logger);
         var parser = new HtmlParser();
 
         var worker = new WorkerClient(host, port, id, parallelism, logger, downloader, parser);
@@ -112,7 +115,7 @@ internal static class Program
 
         ILogger logger = new ConsoleLogger("BENCH");
         using HttpClient http = CreateHttpClient();
-        var downloader = new PageDownloader(http);
+        var downloader = new PageDownloader(http, BuildRetryPolicy(args, logger), logger);
         var parser = new HtmlParser();
 
         var benchmark = new BenchmarkRunner(downloader, parser, logger);
@@ -135,7 +138,9 @@ internal static class Program
             Timeout = TimeSpan.FromSeconds(15) // не ждём вечно "зависшую" страницу
         };
         // Честно представляемся серверу (хороший тон для краулера).
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("EducationalCrawler/1.0");
+        // ВАЖНО: значение заголовка должно быть только из ASCII-символов
+        // (кириллица в HTTP-заголовках недопустима — иначе запрос упадёт).
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("EducationalCrawler/1.0 (+educational-project)");
         return http;
     }
 
@@ -155,6 +160,40 @@ internal static class Program
     {
         string value = GetArg(args, name, defaultValue.ToString());
         return int.TryParse(value, out int result) ? result : defaultValue;
+    }
+
+    /// <summary>
+    /// Построить политику ретраев из аргументов:
+    ///   --retries       сколько повторов (по умолчанию 2; 0 — без повторов)
+    ///   --retry-delay   базовая пауза в мс (по умолчанию 500, дальше удваивается)
+    ///   --retry-status  какие статусы повторять, через запятую (например "500,502,503");
+    ///                   если не задано — берётся набор по умолчанию.
+    /// Таймаут и сетевые сбои повторяются всегда, 404 и прочие — нет.
+    /// </summary>
+    private static RetryPolicy BuildRetryPolicy(string[] args, ILogger logger)
+    {
+        int retries = GetIntArg(args, "--retries", 2);
+        int retryDelay = GetIntArg(args, "--retry-delay", 500);
+        IEnumerable<int>? statuses = ParseStatusCodes(GetArg(args, "--retry-status", string.Empty));
+
+        var policy = new RetryPolicy(retries, TimeSpan.FromMilliseconds(retryDelay), statuses);
+        logger.Info($"Ретраи: повторов={retries}, базовая пауза={retryDelay} мс, статусы=[{policy.DescribeStatuses()}] (+ таймаут/сеть)");
+        return policy;
+    }
+
+    /// <summary>Разобрать список HTTP-статусов "500,502,503". Пусто => null (взять набор по умолчанию).</summary>
+    private static IEnumerable<int>? ParseStatusCodes(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var codes = new List<int>();
+        foreach (string part in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (int.TryParse(part, out int code))
+                codes.Add(code);
+        }
+        return codes.Count > 0 ? codes : null;
     }
 
     /// <summary>Разобрать строку "host:port" на хост и порт.</summary>
@@ -180,11 +219,14 @@ internal static class Program
         Console.WriteLine("  Мастер (координатор):");
         Console.WriteLine("    dotnet run -- master [--port 5000] [--seed URL] [--depth 2] [--pages 50]");
         Console.WriteLine("                        [--strategy roundrobin|leastloaded] [--delay 200]");
+        Console.WriteLine("                        [--output файл.csv]   (по умолчанию: хост_дата-время.csv)");
         Console.WriteLine();
         Console.WriteLine("  Воркер (рабочий узел):");
         Console.WriteLine("    dotnet run -- worker [--master localhost:5000] [--parallelism 8] [--id worker-1]");
+        Console.WriteLine("                        [--retries 2] [--retry-delay 500] [--retry-status 500,502,503,504]");
         Console.WriteLine();
         Console.WriteLine("  Бенчмарк (сравнение последовательной и параллельной обработки):");
         Console.WriteLine("    dotnet run -- benchmark [--seed URL] [--pages 30] [--parallelism 8]");
+        Console.WriteLine("                           [--retries 2] [--retry-delay 500] [--retry-status 500,502,503,504]");
     }
 }

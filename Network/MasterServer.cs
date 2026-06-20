@@ -234,8 +234,7 @@ public sealed class MasterServer
         }
     }
 
-    // ---------- Раздача задач ----------
-
+    // Раздача задач
     private async Task DispatchLoopAsync(CancellationToken ct)
     {
         try
@@ -282,8 +281,7 @@ public sealed class MasterServer
         return null;
     }
 
-    // ---------- Обработка результата ----------
-
+    // Обработка результата
     private void ProcessResult(WorkerInfo worker, PageData page)
     {
         // Задача больше не "в работе" у этого воркера.
@@ -301,14 +299,11 @@ public sealed class MasterServer
         {
             // Для выгрузки в CSV сохраняем только успешно обработанные страницы.
             _allResults.Enqueue(page);
-
             _index.AddDocument(page);
             Interlocked.Increment(ref _pagesIndexed);
             _stats.RecordSuccess(page.ByteCount, page.Links.Count);
 
-            // Ставим в очередь найденные ссылки (они на одну глубину дальше).
-            // ВАЖНО: делаем это ДО уменьшения счётчика _pendingCount ниже,
-            // иначе можно ошибочно решить, что обход завершён.
+            // Ставим в очередь найденные ссылки (они на одну глубину дальше)
             foreach (string link in page.Links)
                 TryEnqueue(new CrawlTask(link, page.Depth + 1));
         }

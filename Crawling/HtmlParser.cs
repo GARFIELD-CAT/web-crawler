@@ -4,20 +4,9 @@ using DistributedWebCrawler.Interfaces;
 
 namespace DistributedWebCrawler.Crawling;
 
-/// <summary>
-/// Разбирает HTML "вручную" с помощью регулярных выражений.
-///
-/// ВАЖНО (для защиты у преподавателя): по-настоящему правильно HTML парсят
-/// специальными библиотеками (например, AngleSharp или HtmlAgilityPack), но они
-/// внешние, а задание запрещает сторонние библиотеки. Поэтому здесь мы используем
-/// регулярные выражения из стандартной библиотеки .NET. Для учебного примера и
-/// аккуратной вёрстки этого достаточно, но для "боевого" краулера так делать не стоит.
-/// </summary>
+// Разбирает HTML вручную с помощью регулярных выражений.
 public class HtmlParser : IHtmlParser
 {
-    // Регулярные выражения компилируем один раз (RegexOptions.Compiled) — так быстрее,
-    // потому что они применяются к каждой странице.
-
     // Заголовок: содержимое <title>...</title>
     private static readonly Regex TitleRegex =
         new("<title[^>]*>(.*?)</title>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
@@ -47,15 +36,17 @@ public class HtmlParser : IHtmlParser
 
     public IReadOnlyList<string> ExtractWords(string html)
     {
-        // 1) убираем скрипты и стили, 2) убираем все теги, 3) раскодируем сущности
+        // убираем скрипты и стили, 
         string noScripts = ScriptStyleRegex.Replace(html, " ");
+        // убираем все теги и раскодируем сущности
         string text = WebUtility.HtmlDecode(TagRegex.Replace(noScripts, " "));
 
         var words = new List<string>();
         foreach (Match match in WordRegex.Matches(text))
         {
             string word = match.Value.ToLowerInvariant();
-            if (word.Length >= 3) // слишком короткие токены ("a", "of") не индексируем
+            // слишком короткие токены ("a", "of") не индексируем
+            if (word.Length >= 3)
                 words.Add(word);
         }
         return words;

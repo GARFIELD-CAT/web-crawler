@@ -234,7 +234,8 @@ public sealed class MasterServer
         }
     }
 
-    // Раздача задач
+    // ---------- Раздача задач ----------
+
     private async Task DispatchLoopAsync(CancellationToken ct)
     {
         try
@@ -281,7 +282,8 @@ public sealed class MasterServer
         return null;
     }
 
-    // Обработка результата
+    // ---------- Обработка результата ----------
+
     private void ProcessResult(WorkerInfo worker, PageData page)
     {
         // Задача больше не "в работе" у этого воркера.
@@ -299,11 +301,14 @@ public sealed class MasterServer
         {
             // Для выгрузки в CSV сохраняем только успешно обработанные страницы.
             _allResults.Enqueue(page);
+
             _index.AddDocument(page);
             Interlocked.Increment(ref _pagesIndexed);
             _stats.RecordSuccess(page.ByteCount, page.Links.Count);
 
-            // Ставим в очередь найденные ссылки (они на одну глубину дальше)
+            // Ставим в очередь найденные ссылки (они на одну глубину дальше).
+            // ВАЖНО: делаем это ДО уменьшения счётчика _pendingCount ниже,
+            // иначе можно ошибочно решить, что обход завершён.
             foreach (string link in page.Links)
                 TryEnqueue(new CrawlTask(link, page.Depth + 1));
         }
@@ -530,7 +535,9 @@ public sealed class MasterServer
         if (ct.IsCancellationRequested || _index.DocumentCount == 0)
             return;
 
-        _logger.Info("Поиск по собранным данным. Введите слово(а) для поиска (пустая строка — выход).");
+        _logger.Info("Поиск по собранным данным (пустая строка — выход).");
+        _logger.Info("  слова       — найти страницы с любым из слов;");
+        _logger.Info("  \"точная фраза\" в кавычках — найти страницы, где слова идут подряд.");
         while (!ct.IsCancellationRequested)
         {
             Console.Write("поиск> ");
@@ -538,7 +545,14 @@ public sealed class MasterServer
             if (string.IsNullOrWhiteSpace(query))
                 break;
 
-            IReadOnlyList<SearchResult> results = _index.Search(query, maxResults: 10);
+            query = query.Trim();
+
+            // Запрос в двойных кавычках => поиск по точной фразе, иначе обычный поиск по словам.
+            IReadOnlyList<SearchResult> results =
+                query.Length >= 2 && query.StartsWith('"') && query.EndsWith('"')
+                    ? _index.SearchPhrase(query.Trim('"'), maxResults: 10)
+                    : _index.Search(query, maxResults: 10);
+
             if (results.Count == 0)
             {
                 Console.WriteLine("  Ничего не найдено.");

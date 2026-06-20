@@ -68,7 +68,7 @@ internal static class Program
         string seed = GetArg(args, "--seed", "https://books.toscrape.com/");
         int depth = GetIntArg(args, "--depth", 2);
         int pages = GetIntArg(args, "--pages", 50);
-        int delay = GetIntArg(args, "--delay", 200);
+        int delay = GetIntArg(args, "--delay", 20);
         string strategyName = GetArg(args, "--strategy", "roundrobin").ToLowerInvariant();
         // Пустое значение по умолчанию = имя файла сформируется автоматически
         // (хост сайта + дата и время обхода).
@@ -91,7 +91,7 @@ internal static class Program
     private static async Task<int> RunWorkerAsync(string[] args, CancellationToken ct)
     {
         string master = GetArg(args, "--master", "localhost:5000");
-        int parallelism = GetIntArg(args, "--parallelism", 8);
+        int parallelism = GetIntArg(args, "--parallelism", 10);
         // Если идентификатор не задан — генерируем уникальный (на основе номера процесса).
         string id = GetArg(args, "--id", $"worker-{Environment.ProcessId}");
 
@@ -111,7 +111,7 @@ internal static class Program
     {
         string seed = GetArg(args, "--seed", "https://books.toscrape.com/");
         int pages = GetIntArg(args, "--pages", 30);
-        int parallelism = GetIntArg(args, "--parallelism", 8);
+        int parallelism = GetIntArg(args, "--parallelism", 10);
 
         ILogger logger = new ConsoleLogger("BENCH");
         using HttpClient http = CreateHttpClient();

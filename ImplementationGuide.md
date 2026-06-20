@@ -48,7 +48,7 @@ IReadOnlyList<string> links = parser.ExtractLinks(html, "https://books.toscrape.
 
 ### 1.4. `CrawlPipeline` — конвейер на TPL Dataflow
 
-Три «станции»: загрузка → разбор → выдача. Задачи добавляются по одной (`Post`), в
+Три блока: загрузка → разбор → выдача. Задачи добавляются по одной (`Post`), в
 конце вызывается `CompleteAsync()`.
 
 ```csharp

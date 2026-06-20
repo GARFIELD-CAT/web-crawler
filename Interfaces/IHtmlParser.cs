@@ -1,21 +1,14 @@
 namespace DistributedWebCrawler.Interfaces;
 
-/// <summary>
-/// Интерфейс разбора (парсинга) HTML-страницы.
-/// Вынесен в интерфейс, чтобы при желании заменить реализацию
-/// (например, на более точный парсер), не трогая краулер.
-/// </summary>
+// Интерфейс разбора (парсинга) HTML-страницы.
 public interface IHtmlParser
 {
-    /// <summary>Извлечь заголовок страницы (тег &lt;title&gt;).</summary>
+    // Извлечь заголовок страницы (тег &lt;title&gt;).
     string ExtractTitle(string html);
 
-    /// <summary>Извлечь слова из текста страницы (для поискового индекса).</summary>
+    // Извлечь слова из текста страницы (для поискового индекса).
     IReadOnlyList<string> ExtractWords(string html);
 
-    /// <summary>
-    /// Извлечь ссылки со страницы и привести их к абсолютному виду.
-    /// baseUrl нужен, чтобы превратить относительную ссылку (/page) в полную (https://site/page).
-    /// </summary>
+    // Извлечь ссылки со страницы и привести их к абсолютному виду.
     IReadOnlyList<string> ExtractLinks(string html, string baseUrl);
 }

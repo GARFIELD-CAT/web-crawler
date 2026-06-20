@@ -102,7 +102,7 @@ dotnet run -- benchmark --seed https://books.toscrape.com/ --pages 30 --parallel
 | master           | `--delay`        | `200`              | пауза между выдачами задач, мс (вежливость)           |
 | master           | `--output`       | авто               | файл CSV (по умолчанию `хост_дата-время.csv`)         |
 | worker           | `--master`       | `localhost:5000`   | адрес мастера `host:port`                             |
-| worker           | `--parallelism`  | `8`                | сколько страниц обрабатывать одновременно             |
+| worker           | `--parallelism`  | `10`               | сколько страниц обрабатывать одновременно             |
 | worker           | `--id`           | авто               | идентификатор воркера                                 |
 | worker/benchmark | `--retries`      | `2`                | число повторов при временной ошибке (0 — выкл.)       |
 | worker/benchmark | `--retry-delay`  | `500`              | базовая пауза перед повтором, мс (растет ×2)          |

@@ -27,10 +27,10 @@ public class CrawlPipeline : IDisposable
     private readonly Action<PageData> _onResult;
     private readonly CancellationToken _ct;
 
-    // Три "станции" конвейера:
-    private readonly TransformBlock<CrawlTask, DownloadOutcome> _downloadBlock; // станция 1
-    private readonly TransformBlock<DownloadOutcome, PageData> _parseBlock;     // станция 2
-    private readonly ActionBlock<PageData> _outputBlock;                        // станция 3
+    // Три блока конвейера:
+    private readonly TransformBlock<CrawlTask, DownloadOutcome> _downloadBlock;
+    private readonly TransformBlock<DownloadOutcome, PageData> _parseBlock;
+    private readonly ActionBlock<PageData> _outputBlock;
 
     public CrawlPipeline(
         PageDownloader downloader,
@@ -69,26 +69,24 @@ public class CrawlPipeline : IDisposable
         _parseBlock.LinkTo(_outputBlock, linkOptions);
     }
 
-    /// <summary>Добавить задачу в конвейер (на вход первой станции).</summary>
+    // Добавить задачу в конвейер (на вход первой станции).
     public void Post(CrawlTask task) => _downloadBlock.Post(task);
 
-    /// <summary>
-    /// Сообщить, что новых задач больше не будет, и дождаться обработки всех уже добавленных.
-    /// </summary>
+    // Сообщить, что новых задач больше не будет, и дождаться обработки всех уже добавленных.
     public async Task CompleteAsync()
     {
-        _downloadBlock.Complete();        // "вход закрыт"
+        _downloadBlock.Complete();        // вход закрыт
         await _outputBlock.Completion;    // ждём, пока всё дойдёт до последней станции
     }
 
-    // --- Станция 1: загрузка ---
+    // 1: загрузка
     private async Task<DownloadOutcome> DownloadAsync(CrawlTask task)
     {
         (bool ok, string html, int bytes, string? error) = await _downloader.DownloadAsync(task.Url, _ct);
         return new DownloadOutcome { Task = task, Ok = ok, Html = html, Bytes = bytes, Error = error };
     }
 
-    // --- Станция 2: разбор HTML ---
+    // 2: разбор HTML
     private PageData Parse(DownloadOutcome d)
     {
         if (!d.Ok)

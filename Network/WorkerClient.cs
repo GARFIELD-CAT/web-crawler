@@ -5,16 +5,14 @@ using DistributedWebCrawler.Models;
 
 namespace DistributedWebCrawler.Network;
 
-/// <summary>
-/// Рабочий узел (воркер).
-///
-/// Жизненный цикл:
-///   1) подключается к мастеру по TCP и регистрируется;
-///   2) периодически шлёт "пульс" (heartbeat), чтобы мастер знал, что воркер жив;
-///   3) получает задачи (Assign), прогоняет их через конвейер Dataflow;
-///   4) отправляет мастеру результат каждой обработанной страницы;
-///   5) по команде Stop (или при обрыве связи) корректно завершается.
-/// </summary>
+// Рабочий узел (воркер).
+//
+// Жизненный цикл:
+//  1) подключается к мастеру по TCP и регистрируется;
+//  2) периодически шлёт "пульс" (heartbeat), чтобы мастер знал, что воркер жив;
+//  3) получает задачи (Assign), прогоняет их через конвейер Dataflow;
+//  4) отправляет мастеру результат каждой обработанной страницы;
+//  5) по команде Stop (или при обрыве связи) корректно завершается.
 public class WorkerClient
 {
     private readonly string _masterHost;
@@ -30,7 +28,8 @@ public class WorkerClient
     private readonly SemaphoreSlim _sendLock = new(1, 1);
 
     private NetworkStream? _stream;
-    private long _processed; // сколько страниц обработал (для статистики и heartbeat)
+    // сколько страниц обработал (для статистики и heartbeat)
+    private long _processed;
 
     public WorkerClient(
         string masterHost,
@@ -79,8 +78,7 @@ public class WorkerClient
             onResult: page =>
             {
                 Interlocked.Increment(ref _processed);
-                // Отправляем результат "не дожидаясь" (fire-and-forget), но через _sendLock,
-                // поэтому сообщения не перемешаются. Ошибки внутри обрабатываются.
+                // Отправляем результат
                 _ = SendResultAsync(page, workCt);
             },
             workCt);
@@ -135,7 +133,7 @@ public class WorkerClient
         _logger.Info($"Воркер завершил работу. Обработано страниц: {Interlocked.Read(ref _processed)}");
     }
 
-    /// <summary>Отправить мастеру результат обработки одной страницы.</summary>
+    // Отправить мастеру результат обработки одной страницы
     private async Task SendResultAsync(PageData page, CancellationToken ct)
     {
         try
@@ -149,7 +147,7 @@ public class WorkerClient
         }
         catch (OperationCanceledException)
         {
-            // остановка — ничего страшного
+            // остановка штатная
         }
         catch (Exception ex)
         {
@@ -157,7 +155,7 @@ public class WorkerClient
         }
     }
 
-    /// <summary>Каждые 2 секунды шлём мастеру "пульс".</summary>
+    // Каждые 2 секунды шлём мастеру "пульс"
     private async Task HeartbeatLoopAsync(CancellationToken ct)
     {
         try
@@ -183,7 +181,7 @@ public class WorkerClient
         }
     }
 
-    /// <summary>Потокобезопасная отправка сообщения мастеру.</summary>
+    // Потокобезопасная отправка сообщения мастеру
     private async Task SendAsync(Message message, CancellationToken ct)
     {
         if (_stream is null)

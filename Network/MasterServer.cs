@@ -10,20 +10,17 @@ using DistributedWebCrawler.Monitoring;
 
 namespace DistributedWebCrawler.Network;
 
-/// <summary>
-/// Мастер-узел распределённой системы.
-///
-/// Обязанности:
-///   • принимать TCP-подключения воркеров;
-///   • хранить очередь URL для обхода (frontier) и список уже виденных адресов;
-///   • раздавать задачи воркерам по выбранной стратегии;
-///   • получать результаты, складывать данные в индекс и ставить новые ссылки в очередь;
-///   • следить за "пульсом" воркеров и переназначать задачи упавших узлов (отказоустойчивость);
-///   • показывать статистику и в конце дать поиск по собранным данным.
-///
-/// Координация идёт через объекты-поля этого класса (очереди, словари), а НЕ через
-/// глобальные переменные — это требование задания.
-/// </summary>
+// Мастер-узел распределённой системы.
+//
+// Обязанности:
+//   • принимать TCP-подключения воркеров;
+//   • хранить очередь URL для обхода (frontier) и список уже виденных адресов;
+//   • раздавать задачи воркерам по выбранной стратегии;
+//   • получать результаты, складывать данные в индекс и ставить новые ссылки в очередь;
+//   • следить за "пульсом" воркеров и переназначать задачи упавших узлов (отказоустойчивость);
+//   • показывать статистику и в конце дать поиск по собранным данным.
+//
+// Координация идёт через объекты-поля этого класса (очереди, словари)
 public sealed class MasterServer
 {
     private readonly int _port;
@@ -39,16 +36,13 @@ public sealed class MasterServer
     // Список подключённых воркеров: Id -> информация о воркере.
     private readonly ConcurrentDictionary<string, WorkerInfo> _workers = new();
 
-    // Очередь задач (frontier). BlockingCollection потокобезопасна и умеет
-    // "ждать", пока в очереди не появятся элементы (это удобно для цикла раздачи).
+    // Очередь задач. BlockingCollection потокобезопасна и умеет "ждать", пока в очереди не появятся элементы
     private readonly BlockingCollection<CrawlTask> _frontier = new();
 
-    // Множество уже виденных URL (чтобы не обходить одну страницу дважды).
-    // Значение (byte) нам не важно — используем словарь как множество.
+    // Множество уже увиденных URL (чтобы не обходить одну страницу дважды).
     private readonly ConcurrentDictionary<string, byte> _visited = new();
 
-    // Множество уже ОБРАБОТАННЫХ URL (по которым пришёл и учтён результат).
-    // Защищает от повторной обработки при переназначении задач (см. ProcessResult).
+    // Множество уже обработанных URL (по которым пришёл и учтён результат).
     private readonly ConcurrentDictionary<string, byte> _completed = new();
 
     private readonly InvertedIndex _index = new();
@@ -65,7 +59,7 @@ public sealed class MasterServer
     private long _pagesIndexed;    // сколько страниц успешно проиндексировано
     private long _notFoundCount;   // сколько ссылок вернули 404 (страница не найдена)
 
-    // Несколько примеров ссылок с 404 — покажем их в конце (не более 10).
+    // Несколько примеров ссылок с 404
     private readonly ConcurrentQueue<string> _notFoundSamples = new();
 
     // Сигнал "обход полностью завершён".
@@ -104,7 +98,7 @@ public sealed class MasterServer
             logger);
     }
 
-    /// <summary>Запустить мастер: слушать порт и обходить сайт, начиная с seedUrl.</summary>
+    // Запустить мастер: слушать порт и обходить сайт, начиная с seedUrl.
     public async Task RunAsync(string seedUrl, CancellationToken externalCt)
     {
         // Связываем нашу отмену с внешней (Ctrl+C). Любая из них остановит систему.
@@ -160,7 +154,7 @@ public sealed class MasterServer
         RunInteractiveSearch(externalCt);
     }
 
-    // ---------- Приём подключений ----------
+    // Приём подключений
 
     private async Task AcceptLoopAsync(CancellationToken ct)
     {
@@ -186,7 +180,7 @@ public sealed class MasterServer
         }
     }
 
-    /// <summary>Цикл обслуживания одного воркера: читаем его сообщения и реагируем.</summary>
+    // Цикл обслуживания одного воркера: читаем его сообщения и реагируем.
     private async Task HandleWorkerAsync(TcpClient client, CancellationToken ct)
     {
         WorkerInfo? worker = null;
@@ -234,14 +228,13 @@ public sealed class MasterServer
         }
     }
 
-    // ---------- Раздача задач ----------
+    // Раздача задач
 
     private async Task DispatchLoopAsync(CancellationToken ct)
     {
         try
         {
-            // GetConsumingEnumerable выдаёт задачи по мере появления и завершится,
-            // когда вызовут _frontier.CompleteAdding() (то есть когда обход закончен).
+            // GetConsumingEnumerable выдаёт задачи по мере появления
             foreach (CrawlTask task in _frontier.GetConsumingEnumerable(ct))
             {
                 WorkerInfo? worker = await WaitForWorkerAsync(ct);
@@ -252,8 +245,7 @@ public sealed class MasterServer
                 worker.InFlight[task.Url] = task;
                 await SendToWorkerAsync(worker, new Message { Type = MessageType.Assign, Task = task }, ct);
 
-                // Вежливость к сайту: небольшая пауза между выдачами задач,
-                // чтобы не отправлять слишком много запросов за один миг.
+                // Небольшая пауза между выдачами задач, чтобы не отправлять слишком много запросов разом
                 if (_politenessDelayMs > 0)
                     await Task.Delay(_politenessDelayMs, ct);
             }
@@ -268,7 +260,7 @@ public sealed class MasterServer
         }
     }
 
-    /// <summary>Ждать, пока появится хотя бы один живой воркер, и вернуть выбранного стратегией.</summary>
+    // Ждать, пока появится хотя бы один живой воркер, и вернуть выбранного стратегией.
     private async Task<WorkerInfo?> WaitForWorkerAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -282,18 +274,14 @@ public sealed class MasterServer
         return null;
     }
 
-    // ---------- Обработка результата ----------
+    // Обработка результата
 
     private void ProcessResult(WorkerInfo worker, PageData page)
     {
         // Задача больше не "в работе" у этого воркера.
         worker.InFlight.TryRemove(page.Url, out _);
 
-        // Защита от повторной обработки одного и того же URL. Дубликат может прийти,
-        // если задача "упавшего" (на самом деле живого) воркера была переназначена
-        // другому: тогда результат приходит дважды. Первый результат по URL
-        // обрабатываем, любые повторные — игнорируем. Без этого в CSV попадали бы
-        // дубли, а счётчик незавершённых задач уходил бы в минус (досрочное завершение).
+        // Защита от повторной обработки одного и того же URL. Дубликат может прийти
         if (!_completed.TryAdd(page.Url, 0))
             return;
 
@@ -307,8 +295,6 @@ public sealed class MasterServer
             _stats.RecordSuccess(page.ByteCount, page.Links.Count);
 
             // Ставим в очередь найденные ссылки (они на одну глубину дальше).
-            // ВАЖНО: делаем это ДО уменьшения счётчика _pendingCount ниже,
-            // иначе можно ошибочно решить, что обход завершён.
             foreach (string link in page.Links)
                 TryEnqueue(new CrawlTask(link, page.Depth + 1));
         }
@@ -316,8 +302,7 @@ public sealed class MasterServer
         {
             _stats.RecordFailure();
 
-            // 404 (страница не найдена) — частый "мусор" при обходе. Не пишем по строке
-            // на каждую такую ссылку: просто считаем их и сохраняем несколько примеров.
+            //Игнорируем ошибки 404 (страница не найдена). И пару примеров выводим
             bool isNotFound = page.Error is not null && page.Error.Contains("404");
             if (isNotFound)
             {
@@ -337,10 +322,7 @@ public sealed class MasterServer
             SignalCompletion();
     }
 
-    /// <summary>
-    /// Попытаться добавить задачу в очередь. Возвращает false, если задача отброшена
-    /// (слишком глубоко / чужой домен / уже видели / достигнут лимит страниц).
-    /// </summary>
+    // Попытаться добавить задачу в очередь.
     private bool TryEnqueue(CrawlTask task)
     {
         if (task.Depth > _maxDepth)
@@ -379,7 +361,7 @@ public sealed class MasterServer
         return true;
     }
 
-    // ---------- Контроль "пульса" и отказоустойчивость ----------
+    // Контроль "пульса" и отказоустойчивость
 
     private async Task HeartbeatMonitorAsync(CancellationToken ct)
     {
@@ -403,14 +385,10 @@ public sealed class MasterServer
         }
     }
 
-    /// <summary>
-    /// Удалить воркера и вернуть его незавершённые задачи в очередь —
-    /// другой воркер их подхватит. Это и есть переназначение задач при отказе.
-    /// </summary>
+    // Удалить воркера и вернуть его незавершённые задачи в очередь
     private void RemoveWorker(WorkerInfo worker, string reason)
     {
-        // TryRemove гарантирует, что обработаем удаление только один раз,
-        // даже если его одновременно инициировали и монитор пульса, и обрыв соединения.
+        // TryRemove гарантирует, что обработаем удаление только один раз
         if (!_workers.TryRemove(worker.Id, out _))
             return;
 
@@ -419,8 +397,7 @@ public sealed class MasterServer
 
         foreach (KeyValuePair<string, CrawlTask> entry in worker.InFlight)
         {
-            // Эти задачи уже учтены в _pendingCount (результат по ним не пришёл),
-            // поэтому счётчик не трогаем — просто кладём задачу обратно в очередь.
+            // Эти задачи уже учтены в _pendingCount (результат по ним не пришёл)
             if (!_frontier.IsAddingCompleted)
             {
                 try { _frontier.Add(entry.Value); }
@@ -432,7 +409,7 @@ public sealed class MasterServer
         try { worker.Connection.Dispose(); } catch { /* уже закрыто */ }
     }
 
-    // ---------- Вспомогательные методы ----------
+    // Вспомогательные методы 
 
     private IReadOnlyCollection<WorkerInfo> GetAliveWorkers()
     {
@@ -473,7 +450,7 @@ public sealed class MasterServer
         _completion.TrySetResult();       // сигналим, что обход окончен
     }
 
-    /// <summary>Превращает отмену токена в Task, который "завершится" при отмене.</summary>
+    // Превращает отмену токена в Task, который "завершится" при отмене.
     private static Task WaitForCancellationAsync(CancellationToken ct)
     {
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -481,11 +458,8 @@ public sealed class MasterServer
         return tcs.Task;
     }
 
-    /// <summary>
-    /// Определить путь к CSV-файлу. Если пользователь задал --output, используем его.
-    /// Иначе формируем имя автоматически: "хост_дата-время.csv",
-    /// например books.toscrape.com_20260619-230145.csv
-    /// </summary>
+    // Определить путь к CSV-файлу. Если пользователь задал --output, используем его.
+    // Иначе формируем имя автоматически: "хост_дата-время.csv"
     private string ResolveOutputPath()
     {
         if (!string.IsNullOrWhiteSpace(_outputPath))
@@ -496,7 +470,7 @@ public sealed class MasterServer
         return $"{SanitizeFileName(host)}_{timestamp}.csv";
     }
 
-    /// <summary>Убрать из имени файла символы, недопустимые в именах файлов.</summary>
+    // Убрать из имени файла символы, недопустимые в именах файлов.
     private static string SanitizeFileName(string name)
     {
         foreach (char invalid in Path.GetInvalidFileNameChars())
@@ -529,7 +503,7 @@ public sealed class MasterServer
         }
     }
 
-    /// <summary>Простой интерактивный поиск по собранному индексу.</summary>
+    // Простой интерактивный поиск по собранному индексу.
     private void RunInteractiveSearch(CancellationToken ct)
     {
         if (ct.IsCancellationRequested || _index.DocumentCount == 0)

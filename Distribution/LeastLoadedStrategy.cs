@@ -3,11 +3,9 @@ using DistributedWebCrawler.Network;
 
 namespace DistributedWebCrawler.Distribution;
 
-/// <summary>
-/// Least-Loaded ("наименее загруженный"): задача отдаётся тому воркеру,
-/// у которого сейчас меньше всего задач в работе.
-/// Лучше балансирует нагрузку, если воркеры работают с разной скоростью.
-/// </summary>
+// Least-Loaded ("наименее загруженный"): задача отдаётся тому воркеру,
+// у которого сейчас меньше всего задач в работе.
+// Лучше балансирует нагрузку, если воркеры работают с разной скоростью.
 public class LeastLoadedStrategy : IDistributionStrategy
 {
     public string Name => "Least-Loaded";

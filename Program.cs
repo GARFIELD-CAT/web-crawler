@@ -7,16 +7,14 @@ using DistributedWebCrawler.Network;
 
 namespace DistributedWebCrawler;
 
-/// <summary>
-/// Точка входа в программу. В зависимости от первого аргумента запускается одна из ролей:
-///   master    — узел-координатор (раздаёт задачи, собирает результаты);
-///   worker    — рабочий узел (обходит страницы);
-///   benchmark — сравнение последовательной и параллельной обработки.
-///
-/// Программа — ОДИН исполняемый файл, который умеет работать в разных ролях.
-/// Это и реализует "мастер-рабочую" архитектуру: мастер и воркеры — отдельные
-/// процессы (обычно в разных терминалах), общающиеся по TCP.
-/// </summary>
+// Точка входа в программу. В зависимости от первого аргумента запускается одна из ролей:
+//   master    — узел-координатор (раздаёт задачи, собирает результаты);
+//   worker    — рабочий узел (обходит страницы);
+//   benchmark — сравнение последовательной и параллельной обработки.
+//
+// Программа — ОДИН исполняемый файл, который умеет работать в разных ролях.
+// Это и реализует "мастер-рабочую" архитектуру: мастер и воркеры — отдельные
+// процессы (обычно в разных терминалах), общающиеся по TCP.
 internal static class Program
 {
     private static async Task<int> Main(string[] args)
@@ -123,9 +121,9 @@ internal static class Program
         return 0;
     }
 
-    // ---------- Вспомогательные методы ----------
+    // Вспомогательные методы
 
-    /// <summary>Создать общий HttpClient с вежливыми настройками.</summary>
+    //Создать общий HttpClient с вежливыми настройками.
     private static HttpClient CreateHttpClient()
     {
         var handler = new SocketsHttpHandler
@@ -144,7 +142,7 @@ internal static class Program
         return http;
     }
 
-    /// <summary>Получить строковый аргумент вида "--name значение" или значение по умолчанию.</summary>
+    // Получить строковый аргумент вида "--name значение" или значение по умолчанию.
     private static string GetArg(string[] args, string name, string defaultValue)
     {
         for (int i = 0; i < args.Length - 1; i++)
@@ -155,21 +153,19 @@ internal static class Program
         return defaultValue;
     }
 
-    /// <summary>То же, но для целочисленных аргументов.</summary>
+    // То же, но для целочисленных аргументов.
     private static int GetIntArg(string[] args, string name, int defaultValue)
     {
         string value = GetArg(args, name, defaultValue.ToString());
         return int.TryParse(value, out int result) ? result : defaultValue;
     }
 
-    /// <summary>
-    /// Построить политику ретраев из аргументов:
-    ///   --retries       сколько повторов (по умолчанию 2; 0 — без повторов)
-    ///   --retry-delay   базовая пауза в мс (по умолчанию 500, дальше удваивается)
-    ///   --retry-status  какие статусы повторять, через запятую (например "500,502,503");
-    ///                   если не задано — берётся набор по умолчанию.
-    /// Таймаут и сетевые сбои повторяются всегда, 404 и прочие — нет.
-    /// </summary>
+    // Построить политику ретраев из аргументов:
+    //   --retries       сколько повторов (по умолчанию 2; 0 — без повторов)
+    //   --retry-delay   базовая пауза в мс (по умолчанию 500, дальше удваивается)
+    //   --retry-status  какие статусы повторять, через запятую (например "500,502,503");
+    //                   если не задано — берётся набор по умолчанию.
+    // Таймаут и сетевые сбои повторяются всегда, 404 и прочие — нет.
     private static RetryPolicy BuildRetryPolicy(string[] args, ILogger logger)
     {
         int retries = GetIntArg(args, "--retries", 2);
@@ -181,7 +177,7 @@ internal static class Program
         return policy;
     }
 
-    /// <summary>Разобрать список HTTP-статусов "500,502,503". Пусто => null (взять набор по умолчанию).</summary>
+    // Разобрать список HTTP-статусов "500,502,503". Пусто => null (взять набор по умолчанию).
     private static IEnumerable<int>? ParseStatusCodes(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -196,7 +192,7 @@ internal static class Program
         return codes.Count > 0 ? codes : null;
     }
 
-    /// <summary>Разобрать строку "host:port" на хост и порт.</summary>
+    // Разобрать строку "host:port" на хост и порт.
     private static (string Host, int Port) ParseHostPort(string value)
     {
         string[] parts = value.Split(':');

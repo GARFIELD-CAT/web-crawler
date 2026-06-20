@@ -6,15 +6,9 @@ using DistributedWebCrawler.Models;
 
 namespace DistributedWebCrawler.Benchmark;
 
-/// <summary>
-/// Сравнивает два способа обработки одного и того же набора страниц:
-///   1) последовательно (по одной странице за раз);
-///   2) параллельно (через конвейер TPL Dataflow).
-///
-/// Так мы наглядно показываем выигрыш от параллелизма. На веб-краулере он особенно
-/// велик, потому что бо́льшую часть времени программа просто ЖДЁТ ответа сети —
-/// при параллельной загрузке эти ожидания накладываются друг на друга.
-/// </summary>
+// Сравнивает два способа обработки одного и того же набора страниц:
+//   1) последовательно (по одной странице за раз);
+//   2) параллельно (через конвейер TPL Dataflow).
 public class BenchmarkRunner
 {
     private readonly PageDownloader _downloader;
@@ -84,11 +78,7 @@ public class BenchmarkRunner
         PrintTable(urls.Count, maxParallelism, sequentialTime, parallelTime, speedup, efficiency);
     }
 
-    /// <summary>
-    /// Собрать набор URL для теста: скачиваем стартовую страницу, берём ссылки,
-    /// при необходимости заходим вглубь, пока не наберём нужное количество адресов
-    /// (только в пределах того же домена).
-    /// </summary>
+    // Собрать набор URL для теста
     private async Task<List<string>> CollectUrlsAsync(string seed, int target, CancellationToken ct)
     {
         if (!Uri.TryCreate(seed, UriKind.Absolute, out Uri? seedUri))

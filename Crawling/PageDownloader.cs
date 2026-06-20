@@ -3,15 +3,7 @@ using DistributedWebCrawler.Interfaces;
 
 namespace DistributedWebCrawler.Crawling;
 
-/// <summary>
-/// Отвечает за асинхронную загрузку HTML-страниц по сети.
-/// Использует один общий HttpClient (так рекомендует Microsoft:
-/// создавать по одному клиенту на всё приложение, а не на каждый запрос).
-///
-/// Поддерживает повторные попытки (ретраи) по заданной политике: временные ошибки
-/// (5xx, 429, таймаут, сетевой сбой) повторяются с паузой, а "постоянные" (например,
-/// 404) — нет.
-/// </summary>
+// Отвечает за асинхронную загрузку HTML-страниц по сети.
 public sealed class PageDownloader
 {
     private readonly HttpClient _http;
@@ -25,10 +17,7 @@ public sealed class PageDownloader
         _logger = logger;
     }
 
-    /// <summary>
-    /// Асинхронно загрузить страницу с учётом политики ретраев.
-    /// Возвращает кортеж: получилось ли, HTML-код, размер в байтах и текст ошибки (если была).
-    /// </summary>
+    // Асинхронно загрузить страницу с учётом политики ретраев.
     public async Task<(bool Ok, string Html, int Bytes, string? Error)> DownloadAsync(string url, CancellationToken ct)
     {
         string? lastError = null;
